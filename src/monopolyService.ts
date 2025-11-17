@@ -267,21 +267,24 @@ function readGamePlayers(request: Request, response: Response, next: NextFunctio
         .catch((error: Error): void => next(error));
 }
 
-/**
- * Deletes a game and all its PlayerGame records.
- */
-function deleteGame(request: Request, response: Response, next: NextFunction): void {
-    db.tx((t) => {
-        return t.none('DELETE FROM PlayerGame WHERE gameID=${id}', request.params)
-            .then(() => {
-                return t.oneOrNone(
-                    'DELETE FROM Game WHERE id=${id} RETURNING id',
-                    request.params
-                );
-            });
+function deleteGame(req: Request, res: Response, next: NextFunction) {
+    const { id } = req.params;
+
+    db.tx(async (t) => {
+        // 1. Delete PlayerProperty entries
+        await t.none('DELETE FROM PlayerProperty WHERE gameID = $1', [id]);
+
+        // 2. Delete PlayerGame entries
+        await t.none('DELETE FROM PlayerGame WHERE gameID = $1', [id]);
+
+        // 3. Delete Game entry
+        return t.oneOrNone(
+            'DELETE FROM Game WHERE id = $1 RETURNING id',
+            [id]
+        );
     })
-        .then((data: { id: number } | null): void => {
-            returnDataOr404(response, data);
-        })
-        .catch((error: Error): void => next(error));
+        .then(data => returnDataOr404(res, data))
+        .catch(err => next(err));
 }
+
+
