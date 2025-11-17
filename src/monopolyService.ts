@@ -42,6 +42,9 @@
 import express from 'express';
 import pgPromise from 'pg-promise';
 
+import dotenv from 'dotenv';
+dotenv.config();
+
 // Import types for compile-time checking.
 import type { Request, Response, NextFunction } from 'express';
 import type { Player, PlayerInput } from './player.js';
@@ -67,6 +70,9 @@ router.get('/players/:id', readPlayer);
 router.put('/players/:id', updatePlayer);
 router.post('/players', createPlayer);
 router.delete('/players/:id', deletePlayer);
+router.get('/games', readGames);
+router.get('/games/:id', readGamePlayers);
+router.delete('/games/:id', deleteGame);
 
 // For testing only; vulnerable to SQL injection!
 // router.get('/bad/players/:id', readPlayerBad);
@@ -218,4 +224,64 @@ function deletePlayer(request: Request, response: Response, next: NextFunction):
         .catch((error: Error): void => {
             next(error);
         });
+}
+
+/**
+ * Retrieves all games from the database.
+ */
+function readGames(_request: Request, response: Response, next: NextFunction): void {
+    db.manyOrNone('SELECT * FROM Game')
+        .then((data: unknown[]): void => {
+            response.send(data);
+        })
+        .catch((error: Error): void => {
+            next(error);
+        });
+}
+
+/**
+ * Retrieves the players and their scores for a specific game.
+ *
+ * Returns rows of: { name, score }
+ */
+function readGamePlayers(request: Request, response: Response, next: NextFunction): void {
+    db.manyOrNone(
+        `SELECT P.name, PG.score
+         FROM PlayerGame PG
+         JOIN Player P ON PG.playerID = P.id
+         WHERE PG.gameID = ${'id'}`,
+        request.params
+    )
+        .then((data: { name: string; score: number }[]): void => {
+            // An empty list is a valid response; but if the game doesn't exist, return 404.
+            if (data.length === 0) {
+                db.oneOrNone('SELECT id FROM Game WHERE id=${id}', request.params)
+                    .then((game): void => {
+                        returnDataOr404(response, game ? [] : null);
+                    })
+                    .catch((error: Error): void => next(error));
+            } else {
+                response.send(data);
+            }
+        })
+        .catch((error: Error): void => next(error));
+}
+
+/**
+ * Deletes a game and all its PlayerGame records.
+ */
+function deleteGame(request: Request, response: Response, next: NextFunction): void {
+    db.tx((t) => {
+        return t.none('DELETE FROM PlayerGame WHERE gameID=${id}', request.params)
+            .then(() => {
+                return t.oneOrNone(
+                    'DELETE FROM Game WHERE id=${id} RETURNING id',
+                    request.params
+                );
+            });
+    })
+        .then((data: { id: number } | null): void => {
+            returnDataOr404(response, data);
+        })
+        .catch((error: Error): void => next(error));
 }
